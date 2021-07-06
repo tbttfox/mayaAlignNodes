@@ -62,9 +62,6 @@ cmds.nodeEditor(selectDownstream=True)
 '''
 
 
-
-
-
 from __future__ import print_function
 from maya import OpenMayaUI as mui, OpenMaya as om, cmds
 from PySide2.QtWidgets import (
@@ -420,100 +417,110 @@ def getAllTopLevelAttrs(allNodeNames=None, curNodeEd=None):
     return ret
 
 
-#tla = getAllTopLevelAttrs()
+# tla = getAllTopLevelAttrs()
 # align(getSelItems(), ySetter, prc=1.0)
 # distribute(getSelItems(), xSetter)
 
-def getNextConnections(seeds, cnx):
-    layer = []
-    for s in seeds:
-        layer.extend(cnx[s])
-    return layer
+
+def _buildFullTree(k, cnx, ret, path, cycles, depth=0):
+    if k in path:
+        cycles.append(set(path[path.index(k) :]))
+    elif k not in ret:
+        fts = set()
+        p = path + [k]
+        for ups in cnx[k]:
+            fts |= _buildFullTree(ups, cnx, ret, p, cycles, depth + 1)
+        ret[k] = fts
+        return set([k]) | ret.get(k, set())
+    return set([k])
 
 
-def buildTree(seed, ups):
-    tree = [[seed]]
-    memo = set()
-    for _ in xrange(2048):
-        layer = set(getNextConnections(tree[-1], ups))
-        newMemo = memo | layer
-        if not layer:
-            break
-        if memo == newMemo:
-            break
-        memo = newMemo
-        tree.append(layer)
-    else:
-        raise RuntimeError("Tree depth exceeded 2048 levels")
-    return tree, memo
+def buildFullTree(cnx):
+    """ Given a dictionary of {node->[direct connections]}, build a dictionary
+    of {node->[All Downstreams]}. Also detect cycles while we're in there
 
-def combineIndex(idx, *trees):
-    """ Combine a specific index of a bunch of tree layers
-    If the layers don't exist, just skip it
+    Arguments:
+        cnx (dict): The dictionary of direct connections
+
+    Returns:
+        dict: Dictionary of fully recursive connections
+        list: List of cycles encountered
     """
-    out = set()
-    for t in trees:
-        try:
-            out |= t[idx]
-        except IndexError:
-            pass
-    return out
+    ret = {}
+    cycles = []
+    for k in cnx.keys():
+        _buildFullTree(k, cnx, ret, [], cycles)
 
-def sweepTree(tree, memo, cnx):
-    """ Sweep across a tree from beginning to end, adding any missing
-    nodes from the cnx dictionary
-    """
-    newLayers = [set()]
-    for i in xrange(2048):
-        fullLayer = set(getNextConnections(combineIndex(i, tree, newLayers), cnx))
-        newLayer = fullLayer - memo
-        newMemo = memo | fullLayer
-        if i >= len(tree) - 1:
-            if not newLayer:  # ALSO if there's more to do in tree and newlayers
-                break
-            if memo == newMemo:
-                break
-        memo = newMemo
-        newLayers.append(newLayer)
-    else:
-        raise RuntimeError("Tree sweeping went over 2048 iterations")
+    # Turn the cycles into dicts so I can quickly access them
+    # based off the current object
+    cDict = {}
+    for cy in cycles:
+        for c in cy:
+            cDict[c] = cy
 
-    out = [combineIndex(i, tree, newLayers) for i in range(max(len(tree), len(newLayers)))]
-    return out, memo
+    dDict = {}
+    for k, v in ret.iteritems():
+        dDict[k] = v - set([k])
 
-def buildLayoutLayers():
-    """ When laying out the node editor, partition the nodes into
-    discrete interconnected graphs with discrete vertical slices
-    """
-    # First get all the nodes shown in the current editor
+    return dDict, cDict
+
+
+def buildTreeLayers():
     pan = cmds.getPanel(scriptType="nodeEditorPanel")[0]
     edName = pan + "NodeEditorEd"
-    allNodeNames = cmds.ls(cmds.nodeEditor(edName, getNodeList=True, query=True), long=True)
+    allNodeNames = cmds.ls(
+        cmds.nodeEditor(edName, getNodeList=True, query=True), long=True
+    )
     nnset = set(allNodeNames)
 
     # For all those objects get the up/down streams limited by the current panel
     ups, downs = {}, {}
     for k in nnset:
-        ucnx = cmds.ls(cmds.listConnections(k, destination=False, shapes=True) or [], long=True) or []
+        ucnx = (
+            cmds.ls(
+                cmds.listConnections(k, destination=False, shapes=True) or [], long=True
+            )
+            or []
+        )
         ups[k] = sorted(set(ucnx) & nnset)
-        dcnx = cmds.ls(cmds.listConnections(k, source=False, shapes=True) or [], long=True) or []
+        dcnx = (
+            cmds.ls(cmds.listConnections(k, source=False, shapes=True) or [], long=True)
+            or []
+        )
         downs[k] = sorted(set(dcnx) & nnset)
 
-    # Get the nodes with no displayed downstreams
-    # Those will be the roots of the graphs
-    seeds = set([k for k, v in downs.iteritems() if not v])
-    trees = []
-    while seeds:
-        tree = [[seeds.pop()]]
-        memo = set([tree[0][0]])
-        newMemo = set([])
-        while memo != newMemo:
-            memo = newMemo
-            tree, newMemo = sweepTree(tree, copy.copy(memo), ups)
-            tree, newMemo = sweepTree(tree[::-1], newMemo, downs)
-            tree = tree[::-1]
-        trees.append(tree)
-        seeds -= newMemo
+    fullUps, upCycles = buildFullTree(ups)
+    fullDowns, downCycles = buildFullTree(downs)
+    seeds = sorted(set([k for k, v in downs.iteritems() if not v]))
+
+    tree = [seeds[:]]
+    memo = set(copy.copy(tree[0]))
+    for _ in range(2048):
+        layer = set()
+        for s in tree[-1]:
+            layer |= set(ups[s])
+
+        if not layer:
+            break
+        layer -= memo
+        # Look through the objects in the current layer
+        # Any of them that have all their downstreams
+        # currently in the tree can be added
+        adc = set()
+        for i in layer:
+            adc |= downCycles.get(i, set())
+
+        newLayer = []
+        for i in layer:
+            fd = fullDowns[i] - adc
+            if not (fd - memo):
+                newLayer.append(i)
+
+        if not newLayer:
+            break
+        tree.append(newLayer)
+        memo.update(newLayer)
+    else:
+        raise RuntimeError("Recursion Too Deep")
 
     return tree
-
