@@ -98,7 +98,7 @@ def getNodeEdUI():
     stack = nodeEdPane.findChild(QStackedLayout)
     nodeEdGraphView = stack.currentWidget().findChild(QGraphicsView)
     nodeEdScene = nodeEdGraphView.scene()
-    return nodeEdGraphView, nodeEdScene
+    return nodeEdGraphView, nodeEdScene, edName
 
 
 def getSelItems(curNodeEd=None):
@@ -107,7 +107,7 @@ def getSelItems(curNodeEd=None):
     Returns:
         list(QGraphicsItem): The selected items in the current editor tab
     """
-    nodeEdGraphView, nodeEdScene = curNodeEd or getNodeEdUI()
+    nodeEdGraphView, nodeEdScene, nodeEdName = curNodeEd or getNodeEdUI()
     items = nodeEdScene.selectedItems()
     # There are also
     # QGraphicsPathItems (The connection lines)
@@ -123,7 +123,7 @@ def getAllItems(curNodeEd=None):
     Returns:
         list(QGraphicsItem): The nodes in the current editor tab
     """
-    nodeEdGraphView, nodeEdScene = curNodeEd or getNodeEdUI()
+    nodeEdGraphView, nodeEdScene, nodeEdName = curNodeEd or getNodeEdUI()
     items = nodeEdScene.items()
     items = [i for i in items if type(i) is QGraphicsItem]
     return items
@@ -365,29 +365,44 @@ def restoreSel():
 
 
 def getAllNodeNames(curNodeEd=None):
-    curNodeEd = curNodeEd or getNodeEdUI()
-    nodes = getAllItems(curNodeEd=curNodeEd)
+    """ Get the full names of all the nodes in the current node editor """
+    if curNodeEd is None:
+        curNodeEd = getNodeEdUI()
+
+    nodeEdName = curNodeEd[2]
+    allNodeNames = cmds.ls(
+        cmds.nodeEditor(nodeEdName, getNodeList=True, query=True), long=True
+    )
+    return allNodeNames
+
+
+def getAllNodeObjects(curNodeEd=None):
+    """ Get all the Qt node objects keyed by their names """
+    allNodeNames = getAllNodeNames(curNodeEd=curNodeEd)
     nnDict = {}
     with restoreSel():
-        for node in nodes:
-            nn = getNodeName(node)
-            objs = cmds.ls(nn, long=True)
-            if not objs:
-                continue
-            elif len(objs) == 1:
-                nnDict[objs[0]] = node
-            else:
-                for obj in objs:
-                    cmds.select(obj)
-                    sel = getSelItems(curNodeEd=curNodeEd)
-                    if sel:
-                        nnDict[obj] = sel[0]
+        for nn in allNodeNames:
+            cmds.select(nn)
+            sel = getSelItems(curNodeEd=curNodeEd)
+            if sel:
+                nnDict[nn] = sel[0]
     return nnDict
 
 
 def getAllTopLevelAttrs(allNodeNames=None, curNodeEd=None):
+    """ Get all the top-level attributes currently displayed in the Node Editor
+
+    Arguments:
+        allNodeNames (list, optional): The list of nodes to check. These should
+            be full names. If not supplied then check all the nodes
+        curNodeEd (str, optional): The node editor instance to operate on
+
+    Returns:
+        dict: A dict of {nodeFullName: [MFnAttribute, ...]}
+
+    """
     curNodeEd = curNodeEd or getNodeEdUI()
-    allNodeNames = allNodeNames or getAllNodeNames(curNodeEd=curNodeEd)
+    allNodeNames = allNodeNames or getAllNodeObjects(curNodeEd=curNodeEd)
 
     ret = {}
     for nodeName, node in allNodeNames.iteritems():
@@ -465,31 +480,38 @@ def buildFullTree(cnx):
     return dDict, cDict
 
 
-def buildTreeLayers():
-    pan = cmds.getPanel(scriptType="nodeEditorPanel")[0]
-    edName = pan + "NodeEditorEd"
-    allNodeNames = cmds.ls(
-        cmds.nodeEditor(edName, getNodeList=True, query=True), long=True
-    )
-    nnset = set(allNodeNames)
+def getStreams(allNodeNames=None, curNodeEd=None):
+    if allNodeNames is None:
+        allNodeNames = getAllNodeNames(curNodeEd=curNodeEd)
 
+    nnset = set(allNodeNames)
     # For all those objects get the up/down streams limited by the current panel
     ups, downs = {}, {}
     for k in nnset:
-        ucnx = (
-            cmds.ls(
-                cmds.listConnections(k, destination=False, shapes=True) or [], long=True
-            )
-            or []
-        )
+
+        ucnx = cmds.listConnections(k, destination=False, shapes=True) or []
+        ucnx = cmds.ls(ucnx, long=True) or []
         ups[k] = sorted(set(ucnx) & nnset)
-        dcnx = (
-            cmds.ls(cmds.listConnections(k, source=False, shapes=True) or [], long=True)
-            or []
-        )
+
+        dcnx = cmds.listConnections(k, source=False, shapes=True) or []
+        dcnx = cmds.ls(dcnx, long=True) or []
         downs[k] = sorted(set(dcnx) & nnset)
 
-    fullUps, upCycles = buildFullTree(ups)
+    return ups, downs
+
+
+def buildTreeLayers(curNodeEd=None):
+    """ For a given node editor, determine the right-to-left "layers" for layout
+    This *should* build the exact same layers as the built-in layout command
+
+    Arguments:
+        curNodeEd (list, optional): The return value of getNodeEdUI()
+
+    Returns:
+        list: An ordered list of unordered layers
+
+    """
+    ups, downs = getStreams(curNodeEd=curNodeEd)
     fullDowns, downCycles = buildFullTree(downs)
     seeds = sorted(set([k for k, v in downs.iteritems() if not v]))
 
@@ -524,3 +546,56 @@ def buildTreeLayers():
         raise RuntimeError("Recursion Too Deep")
 
     return tree
+
+
+def separateTrees(multiTree, fullUps):
+    """ Given the all-in-one tree from buildTreeLayers, separate the tree into
+    interconnected graphs
+    """
+    seeds = {frozenset([i]): fullUps[i] for i in multiTree[-1]}
+    for _ in xrange(1024):
+        newSeeds = {}
+        found = False
+        for ka, va in seeds.iteritems():
+            for kb, vb in seeds.iteritems():
+                # If the keys are the same object, skip
+                if ka is kb:
+                    continue
+                # If there is a value overlap
+                if va & vb:
+                    found = True
+                    newSeeds[ka | kb] = va | vb
+        seeds = newSeeds
+        if not found:
+            break
+    else:
+        raise RuntimeError("Too Many Iterations")
+
+
+
+
+
+
+
+
+def sortTreeLayers(tree, ups, curNodeEd=None):
+    """ Sort the given tree layers top-to-bottom """
+    allNodeNames = set()
+    for layer in tree:
+        allNodeNames |= layer
+    tlaDict = getAllTopLevelAttrs(allNodeNames=allNodeNames, curNodeEd=curNodeEd)
+
+
+
+
+
+
+
+
+def layoutTreeLayers(tree):
+    """ Determine the real vertical positions of the nodes in the given tree
+    that will make a straighter, more readable graph 
+    """
+
+
+
