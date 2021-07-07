@@ -12,9 +12,25 @@ from contextlib import contextmanager
 from shiboken2 import wrapInstance
 import sys
 import copy
+import re
 
 if sys.version_info.major == 3:
     long = int
+
+
+def _plugNatSort(ls):
+    """ Naturalsort by the first item in a tuple
+    Adapted from: http://blog.codinghorror.com/sorting-for-humans-natural-sort-order/
+    This could definitely be more generic, but it's probably not worth the time
+    """
+
+    def convert(text):
+        return int(text) if text.isdigit() else text.lower()
+
+    def alphanum_key(key):
+        return [convert(c) for c in re.split('([0-9]+)', key[0])]
+
+    return sorted(ls, key=alphanum_key)
 
 
 @contextmanager
@@ -73,6 +89,11 @@ class NodeEditorUI(object):
         self._graphView = None
         self._scene = None
         self._name = None
+        self._ups = None
+        self._fullUps = None
+        self._downs = None
+        self._fullDowns = None
+        self._cycles = None
 
     def _getCurrentView(self):
         pan = cmds.getPanel(scriptType="nodeEditorPanel")[0]
@@ -102,6 +123,103 @@ class NodeEditorUI(object):
         if self._name is None:
             self._getCurrentView()
         return self._name
+
+    def getStreams(self, allNodeNames=None):
+        allNodeNames = allNodeNames or self.getAllNodeNames()
+        nnset = set(allNodeNames)
+        # For all those objects get the up/down streams limited by the current panel
+        ups, downs = {}, {}
+        for k in nnset:
+
+            ucnx = cmds.listConnections(k, destination=False, shapes=True) or []
+            ucnx = cmds.ls(ucnx, long=True) or []
+            ups[k] = sorted(set(ucnx) & nnset)
+
+            dcnx = cmds.listConnections(k, source=False, shapes=True) or []
+            dcnx = cmds.ls(dcnx, long=True) or []
+            downs[k] = sorted(set(dcnx) & nnset)
+
+        return ups, downs
+
+    @staticmethod
+    def _buildFullTree(cnx):
+        """ Given a dictionary of {node->[direct connections]}, build a dictionary
+        of {node->[All Downstreams]}. Also detect cycles while we're in there
+
+        Arguments:
+            cnx (dict): The dictionary of direct connections
+
+        Returns:
+            dict: Dictionary of fully recursive connections
+            list: List of cycles encountered
+        """
+
+        def _bft(k, cnx, ret, path, cycles, depth=0):
+            if k in path:
+                cycles.append(set(path[path.index(k) :]))
+            elif k not in ret:
+                fts = set()
+                p = path + [k]
+                for ups in cnx[k]:
+                    fts |= _bft(ups, cnx, ret, p, cycles, depth + 1)
+                ret[k] = fts
+            return set([k]) | ret.get(k, set())
+
+        ret = {}
+        cycles = []
+        for k in cnx.keys():
+            _bft(k, cnx, ret, [], cycles)
+
+        # Turn the cycles into dicts so I can quickly access them
+        # based off the current object
+        cDict = {}
+        for cy in cycles:
+            for c in cy:
+                cDict[c] = cy
+
+        dDict = {}
+        for k, v in ret.iteritems():
+            dDict[k] = v - set([k])
+
+        return dDict, cDict
+
+    @property
+    def ups(self):
+        if self._ups is None:
+            self._ups, self._downs = self.getStreams()
+        return self._ups
+
+    @property
+    def downs(self):
+        if self._downs is None:
+            self._ups, self._downs = self.getStreams()
+        return self._downs
+
+    @property
+    def fullUps(self):
+        if self._fullUps is None:
+            self._fullUps, cycles = self._buildFullTree(self.ups)
+            if self._cycles is None:
+                self._cycles = cycles
+        return self._fullUps
+
+    @property
+    def fullDowns(self):
+        if self._fullDowns is None:
+            self._fullDowns, cycles = self._buildFullTree(self.downs)
+            if self._cycles is None:
+                self._cycles = cycles
+        return self._fullDowns
+
+    @property
+    def cycles(self):
+        if self._cycles is None:
+            # If cycles is None, then neither fullUps/fullDowns has been called
+            # So, if I'm gonna compute it anyway, may as well store it for later
+            # The buildTreeLayers call uses the fullDownstreams, so may as well
+            # compute that one
+            self._fullDowns, self._cycles = self._buildFullTree(self.downs)
+        return self._cycles
 
     def getSelItems(self):
         """ Get the nodes selected in the UI panel
@@ -333,7 +451,7 @@ class NodeEditorUI(object):
             dict: A dict of {nodeFullName: [MFnAttribute, ...]}
 
         """
-        allNodeNames = allNodeNames or self.getAllNodeNames()
+        allNodeNames = allNodeNames or self.getAllNodeObjects()
 
         ret = {}
         for nodeName, node in allNodeNames.iteritems():
@@ -362,83 +480,23 @@ class NodeEditorUI(object):
             ret[nodeName] = retVal
         return ret
 
-    def buildFullTree(self, cnx):
-        """ Given a dictionary of {node->[direct connections]}, build a dictionary
-        of {node->[All Downstreams]}. Also detect cycles while we're in there
-
-        Arguments:
-            cnx (dict): The dictionary of direct connections
-
-        Returns:
-            dict: Dictionary of fully recursive connections
-            list: List of cycles encountered
-        """
-
-        def _buildFullTree(k, cnx, ret, path, cycles, depth=0):
-            if k in path:
-                cycles.append(set(path[path.index(k) :]))
-            elif k not in ret:
-                fts = set()
-                p = path + [k]
-                for ups in cnx[k]:
-                    fts |= _buildFullTree(ups, cnx, ret, p, cycles, depth + 1)
-                ret[k] = fts
-                return set([k]) | ret.get(k, set())
-            return set([k])
-
-        ret = {}
-        cycles = []
-        for k in cnx.keys():
-            _buildFullTree(k, cnx, ret, [], cycles)
-
-        # Turn the cycles into dicts so I can quickly access them
-        # based off the current object
-        cDict = {}
-        for cy in cycles:
-            for c in cy:
-                cDict[c] = cy
-
-        dDict = {}
-        for k, v in ret.iteritems():
-            dDict[k] = v - set([k])
-
-        return dDict, cDict
-
-    def getStreams(self, allNodeNames=None, curNodeEd=None):
-        allNodeNames = allNodeNames or self.getAllNodeNames()
-        nnset = set(allNodeNames)
-        # For all those objects get the up/down streams limited by the current panel
-        ups, downs = {}, {}
-        for k in nnset:
-
-            ucnx = cmds.listConnections(k, destination=False, shapes=True) or []
-            ucnx = cmds.ls(ucnx, long=True) or []
-            ups[k] = sorted(set(ucnx) & nnset)
-
-            dcnx = cmds.listConnections(k, source=False, shapes=True) or []
-            dcnx = cmds.ls(dcnx, long=True) or []
-            downs[k] = sorted(set(dcnx) & nnset)
-
-        return ups, downs
-
-    def buildTreeLayers(self):
+    def buildTreeLayers(self, seeds):
         """ For a given node editor, determine the right-to-left "layers" for layout
         This *should* build the exact same layers as the built-in layout command
+        Arguments:
+            seeds (list): A list of items to get the upstreams of
 
         Returns:
             list: An ordered list of unordered layers
-
         """
-        ups, downs = self.getStreams()
-        fullDowns, downCycles = self.buildFullTree(downs)
-        seeds = sorted(set([k for k, v in downs.iteritems() if not v]))
+        # seeds = sorted(set([k for k, v in self.downs.iteritems() if not v]))
 
         tree = [seeds[:]]
         memo = set(copy.copy(tree[0]))
         for _ in range(2048):
             layer = set()
             for s in tree[-1]:
-                layer |= set(ups[s])
+                layer |= set(self.ups[s])
 
             if not layer:
                 break
@@ -448,17 +506,17 @@ class NodeEditorUI(object):
             # currently in the tree can be added
             adc = set()
             for i in layer:
-                adc |= downCycles.get(i, set())
+                adc |= self.cycles.get(i, set())
 
             newLayer = []
             for i in layer:
-                fd = fullDowns[i] - adc
+                fd = self.fullDowns[i] - adc
                 if not (fd - memo):
                     newLayer.append(i)
 
             if not newLayer:
                 break
-            tree.append(newLayer)
+            tree.append(sorted(newLayer))
             memo.update(newLayer)
         else:
             raise RuntimeError("Recursion Too Deep")
@@ -466,47 +524,132 @@ class NodeEditorUI(object):
         return tree
 
     @staticmethod
-    def separateTrees(multiTree, fullUps):
-        """ Given the all-in-one tree from buildTreeLayers, separate the tree into
-        interconnected graphs
+    def getTreeSeeds(seeds, fullUps):
+        """ Given a list of seed items, group them so that any pair of items in
+        a group share at least one upstream
+
+        Arguments:
+            seeds (list): A list of the right-most items in the node editor tree
+                These items shuld have upstreams, but not downstreams.
+                ie. self.buildTreeLayers()[0]
+            fullUps (dict): The self.fullUps dictionary
+
+        Returns:
+            list: A list of lists of layer-0 tree items. The upstreams of each set
+                set together form a full interconnected tree.
         """
-        seeds = {frozenset([i]): fullUps[i] for i in multiTree[-1]}
+        # Basically, loop through the seeds to find overlapping values
+        # When we find an overlapping value, merge them, and restart
+        # the whole process. If we make it through the whole process
+        # without finding a merge, then we can return
+        # Note: If a for-loop ends from a break, the else *isn't* run
+
+        seeds = {frozenset([i]): fullUps[i] for i in seeds}
         for _ in xrange(1024):
-            newSeeds = {}
-            found = False
-            for ka, va in seeds.iteritems():
-                for kb, vb in seeds.iteritems():
-                    # If the keys are the same object, skip
+            items = seeds.items()
+            for ka, va in items:
+                for kb, vb in items:
                     if ka is kb:
                         continue
-                    # If there is a value overlap
                     if va & vb:
-                        found = True
-                        newSeeds[ka | kb] = va | vb
-            seeds = newSeeds
-            if not found:
-                break
+                        del seeds[ka]
+                        del seeds[kb]
+                        seeds[ka | kb] = va | vb
+                        break  # GOTO A
+                else:
+                    continue
+                # A
+                break  # GOTO B
+            else:
+                break  # GOTO C
+            # B
         else:
             raise RuntimeError("Too Many Iterations")
+        # C
+        return map(sorted, seeds.keys())
 
+    def reorderInputs(self, node, inputs, tlaDict):
+        """ Given a node and its inputs, reorder the inputs to match the
+        current attribute order """
+        ucnx = (
+            cmds.listConnections(
+                node, destination=False, shapes=True, plugs=True, connections=True
+            )
+            or []
+        )
+        icnx = iter(ucnx)
+        pairs = zip(icnx, icnx)
+        tlaNames = [i.name() for i in tlaDict.get(node, [])]
+        if not tlaNames:
+            return inputs
+        # Build the plug names
+        tlaNames = ["{0}.{1}".format(node, i) for i in tlaNames]
 
-# TODO
+        # Get the connections matching the ordered plug names
+        aplugs = [[p for p in pairs if p[0].startswith(x)] for x in tlaNames]
+        # Sort the pairs by input plug name and index if they exist
+        aplugs = [_plugNatSort(a) for a in aplugs if a]
+        # Flatten the list, and grab only the output plugs
+        aplugs = [i[1] for sublist in aplugs for i in sublist]
+        # Get only the node names
+        aplugs = [i.split('.')[0] for i in aplugs]
+        # Limit the inputs to only what's shown
+        aplugs = [i for i in aplugs if i in inputs]
+        # Get any provided inputs that weren't used
+        inputs = [i for i in inputs if i not in aplugs]
+        # Inputs not in the open plugs show as connected to the top-left corner
+        # so they need to go first
+        return inputs + aplugs
 
+    def reorderLayer(self, prev, layer, tlaDict):
+        """ Starting from the previous layer, get the order for the new layer """
+        # Get the possibly repeated chunks
+        chunks = []
+        memo = set()
+        for p in prev:
+            chunk = [i for i in self.ups[p] if i in layer]
+            chunk = self.reorderInputs(p, chunk, tlaDict)
+            chunk = [i for i in chunk if i not in memo]
+            # Only keep nodes the first time they're encountered
+            # Later: Maybe average where they connect in the list
+            # and put them closer to the "middle"
+            memo.update(chunk)
+            chunks.append(chunk)
+        # Flatten the array of chunks
+        return [i for sublist in chunks for i in sublist]
 
-def sortTreeLayers(tree, ups, curNodeEd=None):
-    """ Sort the given tree layers top-to-bottom """
-    allNodeNames = set()
-    for layer in tree:
-        allNodeNames |= layer
-    tlaDict = getAllTopLevelAttrs(allNodeNames=allNodeNames, curNodeEd=curNodeEd)
+    def sortTreeLayers(self, tree):
+        """ Sort the given tree layers top-to-bottom """
+        allNodeNames = set()
+        for layer in tree:
+            allNodeNames |= layer
+        tlaDict = self.getAllTopLevelAttrs(allNodeNames=allNodeNames)
 
+        newTree = [tree[0][:]]
+        for i in range(1, len(tree)):
+            layer = self.reorderLayer(tree[i - 1], tree[i], tlaDict)
+            newTree.append(layer)
+        return newTree
 
-def layoutTreeLayers(tree):
-    """ Determine the real vertical positions of the nodes in the given tree
-    that will make a straighter, more readable graph 
-    """
+    # TODO
+    def layoutTreeLayers(self, tree):
+        """ Determine the real vertical positions of the nodes in the given tree
+        that will make a straighter, more readable graph
+        """
+        pass
 
+    # TODO
+    def placeNodes(self, trees):
+        """ Given a list of placed trees, find their bounding boxes, get the real
+        node position values, and actually set the data on the Qt items
+        """
+        pass
 
-# tla = getAllTopLevelAttrs()
-# align(getSelItems(), ySetter, prc=1.0)
-# distribute(getSelItems(), xSetter)
+    def layout(self):
+        """ Lay out a node editor, taking the order of the plugs into account """
+        seeds = sorted(set([k for k, v in self.downs.iteritems() if not v]))
+        seeds = self.getTreeSeeds(seeds, self.fullUps)
+        trees = [self.buildTreeLayers(s) for s in seeds]
+        trees = [self.sortTreeLayers(t, self.ups) for t in trees]
+        trees = [self.layoutTreeLayers(t) for t in trees]
+        self.placeNodes(trees)
