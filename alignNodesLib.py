@@ -33,6 +33,21 @@ def _plugNatSort(ls):
     return sorted(ls, key=alphanum_key)
 
 
+def _flatToTuples(flat, count=2):
+	ff = iter(flat)
+	return zip(*[ff]*count)
+
+
+def _dedup(items):
+    memo = set()
+    out = []
+    for i in items:
+        if i not in memo:
+            out.append(i)
+            memo.add(i)
+    return out
+
+
 @contextmanager
 def restoreSel():
     """ Restore the current selection
@@ -406,17 +421,11 @@ class NodeEditorUI(object):
             ret.append(fn(attr))
         return ret
 
-    # TODO: write a function to get *all* node toplevel attrs
-    # And if there are multiple nodes with the same name, then I need to
-    # Do the stupid selection trick to correlate the MObjects with the GraphicsNodes
-
-    def getCurrentState(self):
+    def getCurrentState(self, nodeDict=None):
         """ Get the total state of the current graph """
-        items = self.getAllItems()
         posDict = {}
-        # TODO: Handle multiple nodes with the same name
-        for node in items:
-            nn = self.getNodeName(node)
+        nodeDict = nodeDict or self.getAllNodeObjects()
+        for nn, node in nodeDict.iteritems():
             r = node.sceneBoundingRect()
             posDict[nn] = (r.x(), r.y(), r.width(), r.height())
         return posDict
@@ -440,21 +449,21 @@ class NodeEditorUI(object):
                     nnDict[nn] = sel[0]
         return nnDict
 
-    def getAllTopLevelAttrs(self, allNodeNames=None):
+    def getAllTopLevelAttrs(self, allNodeObjects=None):
         """ Get all the top-level attributes currently displayed in the Node Editor
 
         Arguments:
-            allNodeNames (list, optional): The list of nodes to check. These should
+            allNodeObjects (list, optional): The list of nodes to check. These should
                 be full names. If not supplied then check all the nodes
 
         Returns:
             dict: A dict of {nodeFullName: [MFnAttribute, ...]}
 
         """
-        allNodeNames = allNodeNames or self.getAllNodeObjects()
+        allNodeObjects = allNodeObjects or self.getAllNodeObjects()
 
         ret = {}
-        for nodeName, node in allNodeNames.iteritems():
+        for nodeName, node in allNodeObjects.iteritems():
             dep = self.getDepNode(nodeName)
             adict = self.getAttrDict(dep)
             # childItems should return the simpleText name item
@@ -568,47 +577,51 @@ class NodeEditorUI(object):
         # C
         return map(sorted, seeds.keys())
 
-    def reorderInputs(self, node, inputs, tlaDict):
+    def reorderInputs(self, node, inputs, topLevelAttrDict):
         """ Given a node and its inputs, reorder the inputs to match the
         current attribute order """
-        ucnx = (
+        tlaNames = [i.name() for i in topLevelAttrDict.get(node, [])]
+        if not tlaNames:
+            return inputs
+
+        aliases = cmds.aliasAttr(node, query=True) or []
+        aliases = ["{0}.{1}".format(node, i) for i in aliases]
+        aliases = dict(_flatToTuples(aliases))
+
+        ucnx = cmds.ls(
             cmds.listConnections(
                 node, destination=False, shapes=True, plugs=True, connections=True
             )
-            or []
+            or [],
+            long=True,
         )
-        icnx = iter(ucnx)
-        pairs = zip(icnx, icnx)
-        tlaNames = [i.name() for i in tlaDict.get(node, [])]
-        if not tlaNames:
-            return inputs
+
+        ucnx = [aliases.get(i, i) for i in ucnx]
+        allPairs = _flatToTuples(ucnx)
+        pairs = [i for i in allPairs if i[1].split('.')[0] in inputs]
+
+        # `pairs` is now structured as [(inPlug, outPlug), ...]
+        # Note: the order is *backwards*
+
         # Build the plug names
-        tlaNames = ["{0}.{1}".format(node, i) for i in tlaNames]
+        plugNames = ["{0}.{1}".format(node, i) for i in tlaNames]
 
-        # Get the connections matching the ordered plug names
-        aplugs = [[p for p in pairs if p[0].startswith(x)] for x in tlaNames]
-        # Sort the pairs by input plug name and index if they exist
+        #aplugs = [[p for p in pairs if p[0].startswith(x)] for x in plugNames]
+        aplugs = [[p for p in pairs if re.match(x+r'\b', p[0])] for x in plugNames]
         aplugs = [_plugNatSort(a) for a in aplugs if a]
-        # Flatten the list, and grab only the output plugs
         aplugs = [i[1] for sublist in aplugs for i in sublist]
-        # Get only the node names
         aplugs = [i.split('.')[0] for i in aplugs]
-        # Limit the inputs to only what's shown
-        aplugs = [i for i in aplugs if i in inputs]
-        # Get any provided inputs that weren't used
-        inputs = [i for i in inputs if i not in aplugs]
-        # Inputs not in the open plugs show as connected to the top-left corner
-        # so they need to go first
-        return inputs + aplugs
+        xinputs = [i for i in inputs if i not in aplugs]
+        return _dedup(xinputs + aplugs)
 
-    def reorderLayer(self, prev, layer, tlaDict):
+    def reorderLayer(self, prev, layer, topLevelAttrDict):
         """ Starting from the previous layer, get the order for the new layer """
         # Get the possibly repeated chunks
         chunks = []
         memo = set()
         for p in prev:
             chunk = [i for i in self.ups[p] if i in layer]
-            chunk = self.reorderInputs(p, chunk, tlaDict)
+            chunk = self.reorderInputs(p, chunk, topLevelAttrDict)
             chunk = [i for i in chunk if i not in memo]
             # Only keep nodes the first time they're encountered
             # Later: Maybe average where they connect in the list
@@ -620,16 +633,42 @@ class NodeEditorUI(object):
 
     def sortTreeLayers(self, tree):
         """ Sort the given tree layers top-to-bottom """
-        allNodeNames = set()
+        ano = self.getAllNodeObjects()
+        allNodeObjects = {}
         for layer in tree:
-            allNodeNames |= layer
-        tlaDict = self.getAllTopLevelAttrs(allNodeNames=allNodeNames)
+            for item in layer:
+                allNodeObjects[item] = ano[item]
+
+        topLevelAttrDict = self.getAllTopLevelAttrs(allNodeObjects=allNodeObjects)
 
         newTree = [tree[0][:]]
         for i in range(1, len(tree)):
-            layer = self.reorderLayer(tree[i - 1], tree[i], tlaDict)
+            layer = self.reorderLayer(newTree[-1], tree[i], topLevelAttrDict)
             newTree.append(layer)
         return newTree
+
+    def naiveLayoutTreeLayers(self, tree):
+        """ Determine the real vertical positions of the nodes in the given tree
+        that will make a straighter, more readable graph
+        This naive version just stacks things in layers, and nothing else
+        """
+
+        nodeDict = self.getAllNodeObjects()
+        state = self.getCurrentState(nodeDict=nodeDict)
+
+        hSpacing = 100
+        vSpacing = 50
+        cx = 0
+        for layer in reversed(tree):
+            cw, ch = 0, 0
+            for item in layer:
+                x, y, w, h = state[item]
+                node = nodeDict[item]
+                node.setY(ch)
+                node.setX(cx)
+                cw = max(cw, w)
+                ch += h + vSpacing
+            cx += cw + hSpacing
 
     # TODO
     def layoutTreeLayers(self, tree):
@@ -650,6 +689,13 @@ class NodeEditorUI(object):
         seeds = sorted(set([k for k, v in self.downs.iteritems() if not v]))
         seeds = self.getTreeSeeds(seeds, self.fullUps)
         trees = [self.buildTreeLayers(s) for s in seeds]
-        trees = [self.sortTreeLayers(t, self.ups) for t in trees]
-        trees = [self.layoutTreeLayers(t) for t in trees]
-        self.placeNodes(trees)
+        trees = [self.sortTreeLayers(t) for t in trees]
+        for t in trees:
+            self.naiveLayoutTreeLayers(t)
+
+        #trees = [self.layoutTreeLayers(t) for t in trees]
+        #self.placeNodes(trees)
+
+
+NodeEditorUI().layout()
+

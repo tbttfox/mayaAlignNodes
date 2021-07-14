@@ -1,0 +1,72 @@
+
+"""
+Adds outgoing connections for a specific attribute (under the cursor) to the Node Editor.
+
+1. Gets the plug that the cursor is hovering over
+2. Gets direct output connections (conversion nodes and their outputs if necessary)
+3. Adds these nodes to the Node Editor
+
+This should obviously only be executed while hovering over the attribute in the Node Editor. 
+To test you could: 
+    * assign it to a hotkey
+    * make it a shelf button, execute once and then hit "g" to execute again
+so it is executed while you hover over attributes in the Node Editor
+"""
+from maya import mel
+from maya import cmds
+node_editor = mel.eval("getCurrentNodeEditor")
+item_under_cursor = cmds.nodeEditor(node_editor, feedbackType=True, q=True)
+if item_under_cursor == "plug":
+    plug_under_cursor = cmds.nodeEditor(node_editor, feedbackPlug=True, q=True)
+    # outgoing connections could obviously be changed to incoming connections, ...
+    all_out_con = cmds.listConnections(plug_under_cursor, s=False, d=True, scn=True) or []
+    all_out_con.extend(
+        cmds.listConnections(plug_under_cursor, s=False, d=True, scn=False) or [])
+    all_out_con = list(set(all_out_con)) # deduplicate
+    if all_out_con:
+        cmds.nodeEditor(node_editor, addNode=all_out_con, layout=False, e=True)
+    else:
+        cmds.warning("Attribute '{}' has no outgoing connections.".format(plug_under_cursor))
+else:
+    cmds.warning("Hover over attribute in Node Editor while executing.")
+
+# Get all nodes displayed in the editor
+cmds.nodeEditor(getNodeList=True, query=True)
+
+# Specifies a function to be called whenever the contents of the node editor changes.
+cmds.nodeEditor(contentsChangedCommand=lambda x: x)
+
+# Write out the current node editor to a DOT format file
+# This does *NOT* store plug-level connections
+# Nor does it store node positions ... so it's kinda useless for me
+filePath = ""
+cmds.nodeEditor(dotFormat=filePath, query=True)
+# Read a DOT file format filepath
+cmds.nodeEditor(dotFormat=filePath, edit=True)
+
+# Specifies a function to override the default action when a graph layout is required.
+cmds.nodeEditor(layoutCommand=lambda x: x)
+
+# Select all items up/down stream to the currently active selection.
+cmds.nodeEditor(selectUpstream=True)
+cmds.nodeEditor(selectDownstream=True)
+
+
+
+# user prefs templates are in prefs/viewTemplates/NE<nodeType>Template.xml
+# C:/Users/tyler/Documents/maya/2022_MultiPref/prefs/viewTemplates/NEtransformTemplate.xml
+# XML: <templates>/<view>/(<property>, ...) Read the names of the properties to get all the attrs in order
+# ... otherwise, getting a list of attributes from a node type is done via the api
+# you can list plugs using: MFnDependencyNode::attributeCount() / MFnDependencyNode::attribute()
+
+
+
+Take Over ctrl+right click and shift+right click
+When doing one of these actions, draw currently connected input/output plugs to the left/right respectively
+Let the user click on the nodes
+If a plug is shift+clicked add nodes connected to plug at in/output (depending on side)
+if a plug is ctrl+clickd, remove those nodes by connection
+
+
+
+
