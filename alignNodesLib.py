@@ -1,4 +1,3 @@
-from __future__ import print_function
 from maya import OpenMayaUI as mui, OpenMaya as om, cmds
 from PySide2.QtWidgets import (
     QGraphicsItem,
@@ -19,7 +18,7 @@ if sys.version_info.major == 3:
 
 
 def _plugNatSort(ls):
-    """ Naturalsort by the first item in a tuple
+    """Naturalsort by the first item in a tuple
     Adapted from: http://blog.codinghorror.com/sorting-for-humans-natural-sort-order/
     This could definitely be more generic, but it's probably not worth the time
     """
@@ -28,14 +27,14 @@ def _plugNatSort(ls):
         return int(text) if text.isdigit() else text.lower()
 
     def alphanum_key(key):
-        return [convert(c) for c in re.split('([0-9]+)', key[0])]
+        return [convert(c) for c in re.split("([0-9]+)", key[0])]
 
     return sorted(ls, key=alphanum_key)
 
 
 def _flatToTuples(flat, count=2):
-	ff = iter(flat)
-	return zip(*[ff]*count)
+    ff = iter(flat)
+    return list(zip(*[ff] * count))
 
 
 def _dedup(items):
@@ -50,7 +49,7 @@ def _dedup(items):
 
 @contextmanager
 def restoreSel():
-    """ Restore the current selection
+    """Restore the current selection
     Make sure to turn off undo so that the quick selects
     don't pollute the queue
     """
@@ -64,7 +63,7 @@ def restoreSel():
 
 
 class xSetter(object):
-    """ A class that handles getting/setting the X values
+    """A class that handles getting/setting the X values
     of a group of objects with a consistent interface
     """
 
@@ -82,7 +81,7 @@ class xSetter(object):
 
 
 class ySetter(object):
-    """ A class that handles getting/setting the Y values
+    """A class that handles getting/setting the Y values
     of a group of objects with a consistent interface
     """
 
@@ -116,7 +115,7 @@ class NodeEditorUI(object):
         ctrl = mui.MQtUtil.findControl(self._name)
         if ctrl is None:
             raise RuntimeError("Node editor is not open")
-        nodeEdPane = wrapInstance(long(ctrl), QWidget)
+        nodeEdPane = wrapInstance(int(ctrl), QWidget)
         stack = nodeEdPane.findChild(QStackedLayout)
         self._graphView = stack.currentWidget().findChild(QGraphicsView)
         self._scene = self._graphView.scene()
@@ -158,7 +157,7 @@ class NodeEditorUI(object):
 
     @staticmethod
     def _buildFullTree(cnx):
-        """ Given a dictionary of {node->[direct connections]}, build a dictionary
+        """Given a dictionary of {node->[direct connections]}, build a dictionary
         of {node->[All Downstreams]}. Also detect cycles while we're in there
 
         Arguments:
@@ -193,7 +192,7 @@ class NodeEditorUI(object):
                 cDict[c] = cy
 
         dDict = {}
-        for k, v in ret.iteritems():
+        for k, v in ret.items():
             dDict[k] = v - set([k])
 
         return dDict, cDict
@@ -237,7 +236,7 @@ class NodeEditorUI(object):
         return self._cycles
 
     def getSelItems(self):
-        """ Get the nodes selected in the UI panel
+        """Get the nodes selected in the UI panel
 
         Returns:
             list(QGraphicsItem): The selected items in the current editor tab
@@ -251,7 +250,7 @@ class NodeEditorUI(object):
         return items
 
     def getAllItems(self):
-        """ Get all nodes in the UI panel
+        """Get all nodes in the UI panel
 
         Returns:
             list(QGraphicsItem): The nodes in the current editor tab
@@ -262,7 +261,7 @@ class NodeEditorUI(object):
 
     @staticmethod
     def getNodeName(self, node):
-        """ Get the short name of the passed QGraphicsItem
+        """Get the short name of the passed QGraphicsItem
 
         Currently, I don't know of a way to get the full path to the item
         because there's no direct link from GraphicsNode to MObject
@@ -279,11 +278,11 @@ class NodeEditorUI(object):
         if not chis:
             return None
         nameItem = chis[0]
-        return ':'.join(nameItem.text().split())
+        return ":".join(nameItem.text().split())
 
     @staticmethod
     def getItemPos(items):
-        """ Get the x/y positions of the given UI items in the node editor """
+        """Get the x/y positions of the given UI items in the node editor"""
         nodePosList = []
         for i in items:
             nodePosList.append([i.pos().x(), i.pos().y()])
@@ -291,7 +290,7 @@ class NodeEditorUI(object):
 
     @staticmethod
     def align(items, setter, prc=0.0):
-        """ A funciton that aligns the center lines of a group of items
+        """A funciton that aligns the center lines of a group of items
         along an axis determined by the given setter
 
         Arguments:
@@ -334,7 +333,7 @@ class NodeEditorUI(object):
         sizes = setter.getSizes(items)
 
         order = sorted(enumerate(ipos), key=lambda x: x[1])
-        order, iposS = zip(*order)
+        order, iposS = list(zip(*order))
         sizesS = [sizes[i] for i in order]
 
         start, stop = min(ipos), max(ipos) - sum(sizes) + sizes[0]
@@ -355,7 +354,7 @@ class NodeEditorUI(object):
 
     @staticmethod
     def columnRowSwap(items):
-        """ Swap columns to rows and vice versa"""
+        """Swap columns to rows and vice versa"""
         p = [i.pos() for i in items]
         xy = [(i.x(), i.y()) for i in p]
         x, y = xy[0]
@@ -379,7 +378,7 @@ class NodeEditorUI(object):
 
     @staticmethod
     def getAttrDict(dep):
-        """ Read a depend node to get the top-level attrs """
+        """Read a depend node to get the top-level attrs"""
         dd = {}
         afn = om.MFnAttribute()
         for i in range(dep.attributeCount()):
@@ -389,7 +388,7 @@ class NodeEditorUI(object):
         return dd
 
     def getNodeDisplayedTopLevelAttrs(self, node):
-        """ Get the top-level plug order shown in the node editor
+        """Get the top-level plug order shown in the node editor
         This should simply be from top to bottom
 
         Arguments:
@@ -422,23 +421,23 @@ class NodeEditorUI(object):
         return ret
 
     def getCurrentState(self, nodeDict=None):
-        """ Get the total state of the current graph """
+        """Get the total state of the current graph"""
         posDict = {}
         nodeDict = nodeDict or self.getAllNodeObjects()
-        for nn, node in nodeDict.iteritems():
+        for nn, node in nodeDict.items():
             r = node.sceneBoundingRect()
             posDict[nn] = (r.x(), r.y(), r.width(), r.height())
         return posDict
 
     def getAllNodeNames(self):
-        """ Get the full names of all the nodes in the current node editor """
+        """Get the full names of all the nodes in the current node editor"""
         allNodeNames = cmds.ls(
             cmds.nodeEditor(self.name, getNodeList=True, query=True), long=True
         )
         return allNodeNames
 
     def getAllNodeObjects(self):
-        """ Get all the Qt node objects keyed by their names """
+        """Get all the Qt node objects keyed by their names"""
         allNodeNames = self.getAllNodeNames()
         nnDict = {}
         with restoreSel():
@@ -450,7 +449,7 @@ class NodeEditorUI(object):
         return nnDict
 
     def getAllTopLevelAttrs(self, allNodeObjects=None):
-        """ Get all the top-level attributes currently displayed in the Node Editor
+        """Get all the top-level attributes currently displayed in the Node Editor
 
         Arguments:
             allNodeObjects (list, optional): The list of nodes to check. These should
@@ -463,7 +462,7 @@ class NodeEditorUI(object):
         allNodeObjects = allNodeObjects or self.getAllNodeObjects()
 
         ret = {}
-        for nodeName, node in allNodeObjects.iteritems():
+        for nodeName, node in allNodeObjects.items():
             dep = self.getDepNode(nodeName)
             adict = self.getAttrDict(dep)
             # childItems should return the simpleText name item
@@ -490,7 +489,7 @@ class NodeEditorUI(object):
         return ret
 
     def buildTreeLayers(self, seeds):
-        """ For a given node editor, determine the right-to-left "layers" for layout
+        """For a given node editor, determine the right-to-left "layers" for layout
         This *should* build the exact same layers as the built-in layout command
         Arguments:
             seeds (list): A list of items to get the upstreams of
@@ -534,7 +533,7 @@ class NodeEditorUI(object):
 
     @staticmethod
     def getTreeSeeds(seeds, fullUps):
-        """ Given a list of seed items, group them so that any pair of items in
+        """Given a list of seed items, group them so that any pair of items in
         a group share at least one upstream
 
         Arguments:
@@ -554,8 +553,8 @@ class NodeEditorUI(object):
         # Note: If a for-loop ends from a break, the else *isn't* run
 
         seeds = {frozenset([i]): fullUps[i] for i in seeds}
-        for _ in xrange(1024):
-            items = seeds.items()
+        for _ in range(1024):
+            items = list(seeds.items())
             for ka, va in items:
                 for kb, vb in items:
                     if ka is kb:
@@ -575,11 +574,11 @@ class NodeEditorUI(object):
         else:
             raise RuntimeError("Too Many Iterations")
         # C
-        return map(sorted, seeds.keys())
+        return list(map(sorted, list(seeds.keys())))
 
     def reorderInputs(self, node, inputs, topLevelAttrDict):
-        """ Given a node and its inputs, reorder the inputs to match the
-        current attribute order """
+        """Given a node and its inputs, reorder the inputs to match the
+        current attribute order"""
         tlaNames = [i.name() for i in topLevelAttrDict.get(node, [])]
         if not tlaNames:
             return inputs
@@ -598,7 +597,7 @@ class NodeEditorUI(object):
 
         ucnx = [aliases.get(i, i) for i in ucnx]
         allPairs = _flatToTuples(ucnx)
-        pairs = [i for i in allPairs if i[1].split('.')[0] in inputs]
+        pairs = [i for i in allPairs if i[1].split(".")[0] in inputs]
 
         # `pairs` is now structured as [(inPlug, outPlug), ...]
         # Note: the order is *backwards*
@@ -606,16 +605,16 @@ class NodeEditorUI(object):
         # Build the plug names
         plugNames = ["{0}.{1}".format(node, i) for i in tlaNames]
 
-        #aplugs = [[p for p in pairs if p[0].startswith(x)] for x in plugNames]
-        aplugs = [[p for p in pairs if re.match(x+r'\b', p[0])] for x in plugNames]
+        # aplugs = [[p for p in pairs if p[0].startswith(x)] for x in plugNames]
+        aplugs = [[p for p in pairs if re.match(x + r"\b", p[0])] for x in plugNames]
         aplugs = [_plugNatSort(a) for a in aplugs if a]
         aplugs = [i[1] for sublist in aplugs for i in sublist]
-        aplugs = [i.split('.')[0] for i in aplugs]
+        aplugs = [i.split(".")[0] for i in aplugs]
         xinputs = [i for i in inputs if i not in aplugs]
         return _dedup(xinputs + aplugs)
 
     def reorderLayer(self, prev, layer, topLevelAttrDict):
-        """ Starting from the previous layer, get the order for the new layer """
+        """Starting from the previous layer, get the order for the new layer"""
         # Get the possibly repeated chunks
         chunks = []
         memo = set()
@@ -632,7 +631,7 @@ class NodeEditorUI(object):
         return [i for sublist in chunks for i in sublist]
 
     def sortTreeLayers(self, tree):
-        """ Sort the given tree layers top-to-bottom """
+        """Sort the given tree layers top-to-bottom"""
         ano = self.getAllNodeObjects()
         allNodeObjects = {}
         for layer in tree:
@@ -648,7 +647,7 @@ class NodeEditorUI(object):
         return newTree
 
     def naiveLayoutTreeLayers(self, tree):
-        """ Determine the real vertical positions of the nodes in the given tree
+        """Determine the real vertical positions of the nodes in the given tree
         that will make a straighter, more readable graph
         This naive version just stacks things in layers, and nothing else
         """
@@ -672,30 +671,29 @@ class NodeEditorUI(object):
 
     # TODO
     def layoutTreeLayers(self, tree):
-        """ Determine the real vertical positions of the nodes in the given tree
+        """Determine the real vertical positions of the nodes in the given tree
         that will make a straighter, more readable graph
         """
         pass
 
     # TODO
     def placeNodes(self, trees):
-        """ Given a list of placed trees, find their bounding boxes, get the real
+        """Given a list of placed trees, find their bounding boxes, get the real
         node position values, and actually set the data on the Qt items
         """
         pass
 
     def layout(self):
-        """ Lay out a node editor, taking the order of the plugs into account """
-        seeds = sorted(set([k for k, v in self.downs.iteritems() if not v]))
+        """Lay out a node editor, taking the order of the plugs into account"""
+        seeds = sorted(set([k for k, v in self.downs.items() if not v]))
         seeds = self.getTreeSeeds(seeds, self.fullUps)
         trees = [self.buildTreeLayers(s) for s in seeds]
         trees = [self.sortTreeLayers(t) for t in trees]
         for t in trees:
             self.naiveLayoutTreeLayers(t)
 
-        #trees = [self.layoutTreeLayers(t) for t in trees]
-        #self.placeNodes(trees)
+        # trees = [self.layoutTreeLayers(t) for t in trees]
+        # self.placeNodes(trees)
 
 
 NodeEditorUI().layout()
-

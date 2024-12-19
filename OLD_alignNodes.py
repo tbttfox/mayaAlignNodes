@@ -6,8 +6,6 @@ from shiboken2 import wrapInstance
 import images
 
 
-
-
 class alignNodesUI(QtWidgets.QWidget, alignNodesUI_DockWidget):
     def __init__(self, parent=getMayaWindow()):
         QtWidgets.QWidget.__init__(self, parent)
@@ -16,7 +14,7 @@ class alignNodesUI(QtWidgets.QWidget, alignNodesUI_DockWidget):
 
     def getNodeEdUI(self):
         nodeEdPane = wrapInstance(
-            long(mui.MQtUtil.findControl("nodeEditorPanel1NodeEditorEd")),
+            int(mui.MQtUtil.findControl("nodeEditorPanel1NodeEditorEd")),
             QtWidgets.QWidget,
         )
         nodeEdGraphViewAttr = nodeEdPane.findChild(QtWidgets.QGraphicsView)

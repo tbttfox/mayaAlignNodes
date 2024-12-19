@@ -1,5 +1,3 @@
-
-
 from maya import OpenMaya as om, cmds
 from PySide2.QtWidgets import QGraphicsSceneMouseEvent, QListWidget
 from PySide2.QtCore import QObject, Qt, QPoint
@@ -7,8 +5,10 @@ from PySide2.QtGui import QCursor
 import shiboken2
 from functools import partial
 
+
 def clickMenu(funcs, wid, item):
     funcs[wid.row(item)]()
+
 
 def showMenu(keys, funcs, side, par):
     pos = par.mapFromGlobal(QCursor.pos())
@@ -32,7 +32,6 @@ def showMenu(keys, funcs, side, par):
     menu.move(QPoint(xval, yval))
     menu.show()
     return menu
-
 
 
 class MyFilter(QObject):
@@ -59,15 +58,19 @@ class MyFilter(QObject):
 
                     self.clearMenu(self._inMenu)
                     self.clearMenu(self._outMenu)
-                    pn = plug.split('.', 1)[-1]
+                    pn = plug.split(".", 1)[-1]
 
                     inputs, outputs = self.getAllConnections(plug)
                     if inputs:
                         key = "{2}.{0} ({1})".format(pn, len(inputs), addRem)
-                        self._inMenu = showMenu([key], [lambda: func(inputs)], "left", self._scene)
+                        self._inMenu = showMenu(
+                            [key], [lambda: func(inputs)], "left", self._scene
+                        )
                     if outputs:
                         key = "{2}.{0} ({1})".format(pn, len(outputs), addRem)
-                        self._outMenu = showMenu([key], [lambda: func(outputs)], "right", self._scene)
+                        self._outMenu = showMenu(
+                            [key], [lambda: func(outputs)], "right", self._scene
+                        )
                     return True
 
         return False  # I didn't handle it
@@ -81,9 +84,9 @@ class MyFilter(QObject):
 
     @staticmethod
     def unalias(plug, aliases):
-        nn, an = plug.split('.', 1)
+        nn, an = plug.split(".", 1)
         an = aliases.get(an, an)
-        return '.'.join([nn, an])
+        return ".".join([nn, an])
 
     @staticmethod
     def isPlugChildOf(par, child):
@@ -147,11 +150,10 @@ if not shiboken2.isValid(nui.scene):
 
 try:
     nui.scene.removeEventFilter(ef)
-    print "Removing Event Filter"
+    print("Removing Event Filter")
     del ef
 except NameError:
     nui = NodeEditorUI()
     ef = MyFilter(nui.name, nui.graphView)
     nui.scene.installEventFilter(ef)
-    print "Adding Event Filter"
-
+    print("Adding Event Filter")
